@@ -1,0 +1,2104 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GRIDGUARD: Adaptive Power Grid Fault Localisation & Recovery</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js & OrbitControls via CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            scada: {
+              bg: '#090d16',
+              panel: '#0f172a',
+              card: '#1e293b',
+              border: '#334155',
+              accent: '#38bdf8'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background-color: #090d16;
+      color: #f1f5f9;
+      font-family: 'Inter', sans-serif;
+      overflow-x: hidden;
+    }
+    /* Custom scrollbar for SCADA logs and tables */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+    /* 3D Canvas Container & Floating Labels */
+    #canvas-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      min-height: 460px;
+      background: radial-gradient(circle at center, #111c33 0%, #070b14 100%);
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      outline: none;
+    }
+    .grid-label-3d {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      pointer-events: none;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      color: #f8fafc;
+      white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      transition: border-color 0.25s, background-color 0.25s, color 0.25s;
+      z-index: 10;
+    }
+    .bldg-label-3d {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      pointer-events: none;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 4px;
+      border-radius: 3px;
+      background: rgba(9, 13, 22, 0.72);
+      color: #cbd5e1;
+      white-space: nowrap;
+      z-index: 5;
+    }
+    @keyframes pulseGlow {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+    .animate-scada-pulse {
+      animation: pulseGlow 1.5s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-sky-500 selection:text-white">
+
+  <!-- TOP NAVIGATION BAR -->
+  <header class="sticky top-0 z-40 bg-slate-950/95 backdrop-blur border-b border-slate-800 px-4 py-2.5">
+    <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3">
+      <!-- Brand & Educational Simulation Badge -->
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-sky-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-extrabold tracking-tight text-base sm:text-lg text-white">GRIDGUARD</span>
+            <span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+              Educational Simulation
+            </span>
+          </div>
+          <p class="text-[11px] text-slate-400 hidden sm:block">Adaptive Power Grid Fault Localisation &amp; Recovery System</p>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav id="main-nav" class="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800 overflow-x-auto max-w-full">
+        <button data-tab="dashboard" class="nav-tab active px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-sky-500/20 text-sky-300 border border-sky-500/30 whitespace-nowrap">
+          Dashboard
+        </button>
+        <button data-tab="network" class="nav-tab px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition whitespace-nowrap">
+          Grid Network
+        </button>
+        <button data-tab="faults" class="nav-tab px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition whitespace-nowrap">
+          Fault Management
+        </button>
+        <button data-tab="recovery" class="nav-tab px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition whitespace-nowrap">
+          Recovery Analysis
+        </button>
+        <button data-tab="about" class="nav-tab px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition whitespace-nowrap">
+          About Project
+        </button>
+      </nav>
+
+      <!-- Simulation Speed & Live Status -->
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-800">
+          <span class="text-[11px] text-slate-400 font-medium">Speed:</span>
+          <select id="sim-speed" class="bg-slate-800 text-xs font-mono text-sky-300 rounded-lg px-2 py-0.5 border border-slate-700 focus:outline-none">
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1.0x</option>
+            <option value="2">2.0x</option>
+          </select>
+        </div>
+        <div id="global-status-pill" class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-semibold">
+          <span id="global-status-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-scada-pulse"></span>
+          <span id="global-status-text">NOMINAL</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- WARNING / NOTIFICATION TOAST BANNER -->
+  <div id="alert-banner" class="hidden bg-red-950/90 border-b border-red-500/50 px-4 py-2.5 transition-all">
+    <div class="max-w-[1600px] mx-auto flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5 text-xs sm:text-sm text-red-200">
+        <span class="px-2 py-0.5 rounded bg-red-600 text-white font-mono text-[11px] font-bold">ALERT</span>
+        <span id="alert-message" class="font-medium">Grid fault detected!</span>
+      </div>
+      <button onclick="hideAlert()" class="text-red-300 hover:text-white text-xs font-mono px-2 py-1 rounded bg-red-900/50">Dismiss</button>
+    </div>
+  </div>
+
+  <!-- TOP KPI RIBBON -->
+  <section class="bg-slate-900/60 border-b border-slate-800/80 px-4 py-3">
+    <div class="max-w-[1600px] mx-auto grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-2.5 flex flex-col justify-between">
+        <span class="text-[11px] text-slate-400 font-medium">Total Grids</span>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-total-grids" class="text-xl font-bold font-mono text-white">10</span>
+          <span class="text-[10px] font-mono text-slate-500">ZONES</span>
+        </div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-2.5 flex flex-col justify-between">
+        <span class="text-[11px] text-slate-400 font-medium">Total Units</span>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-total-units" class="text-xl font-bold font-mono text-white">100</span>
+          <span class="text-[10px] font-mono text-slate-500">BLDGS</span>
+        </div>
+      </div>
+      <div class="bg-slate-900 border border-emerald-500/30 rounded-xl p-2.5 flex flex-col justify-between">
+        <span class="text-[11px] text-emerald-400 font-medium">Active Grids</span>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-active-grids" class="text-xl font-bold font-mono text-emerald-400">10</span>
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+        </div>
+      </div>
+      <div class="bg-slate-900 border border-red-500/30 rounded-xl p-2.5 flex flex-col justify-between">
+        <span class="text-[11px] text-red-400 font-medium">Faulty Grids</span>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-faulty-grids" class="text-xl font-bold font-mono text-red-400">0</span>
+          <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+        </div>
+      </div>
+      <div class="bg-slate-900 border border-red-500/20 rounded-xl p-2.5 flex flex-col justify-between">
+        <span class="text-[11px] text-slate-400 font-medium">Affected Units</span>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-affected-units" class="text-xl font-bold font-mono text-red-300">0</span>
+          <span class="text-[10px] font-mono text-red-400/80">OUTAGE</span>
+        </div>
+      </div>
+      <div class="bg-slate-900 border border-yellow-500/30 rounded-xl p-2.5 flex flex-col justify-between">
+        <span class="text-[11px] text-yellow-400 font-medium">Backup Grids</span>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-backup-grids" class="text-xl font-bold font-mono text-yellow-400">0</span>
+          <span class="w-2.5 h-2.5 rounded-full bg-yellow-400"></span>
+        </div>
+      </div>
+      <div class="bg-slate-900 border border-blue-500/30 rounded-xl p-2.5 flex flex-col justify-between col-span-2 sm:col-span-1">
+        <span class="text-[11px] text-blue-400 font-medium">Restored Units</span>
+        <div class="flex items-baseline justify-between mt-1">
+          <span id="kpi-restored-units" class="text-xl font-bold font-mono text-blue-400">0</span>
+          <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MAIN WORKSPACE -->
+  <main class="flex-1 max-w-[1600px] w-full mx-auto p-4 flex flex-col gap-4">
+
+    <!-- PRIMARY ACTION CONTROL BAR (Always Accessible) -->
+    <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
+      <div class="flex flex-wrap items-center gap-2">
+        <button id="btn-start-sim" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-bold tracking-wide transition shadow-lg shadow-emerald-600/20 flex items-center gap-1.5">
+          <span>▶</span> START SIMULATION
+        </button>
+
+        <div class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
+          <select id="fault-grid-select" class="bg-slate-900 text-xs font-mono text-slate-200 rounded-lg px-2.5 py-1.5 border border-slate-700 focus:outline-none">
+            <option value="1">Grid 1 (Zone NW)</option>
+            <option value="2">Grid 2 (Zone N-Mid)</option>
+            <option value="3">Grid 3 (Zone NE)</option>
+            <option value="4">Grid 4 (Zone W-Mid)</option>
+            <option value="5" selected>Grid 5 (Central Hub)</option>
+            <option value="6">Grid 6 (Zone E-Mid)</option>
+            <option value="7">Grid 7 (Zone SW)</option>
+            <option value="8">Grid 8 (Zone S-Mid)</option>
+            <option value="9">Grid 9 (Zone SE)</option>
+            <option value="10">Grid 10 (Industrial Park)</option>
+          </select>
+          <button id="btn-create-fault" class="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 active:scale-95 text-white text-xs font-bold tracking-wide transition shadow-lg shadow-red-600/25">
+            ⚡ CREATE FAULT
+          </button>
+        </div>
+
+        <button id="btn-auto-recover" class="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 active:scale-95 text-white text-xs font-bold tracking-wide transition shadow-lg shadow-sky-600/25 flex items-center gap-1.5">
+          <span>🔄</span> AUTOMATIC RECOVERY
+        </button>
+
+        <button id="btn-reset-sim" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-bold tracking-wide border border-slate-700 transition">
+          ↺ RESET SIMULATION
+        </button>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <button id="btn-show-network" class="px-3 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition">
+          🕸 SHOW GRID NETWORK
+        </button>
+        <button id="btn-show-report" class="px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold transition">
+          📊 SHOW RECOVERY REPORT
+        </button>
+      </div>
+    </div>
+
+    <!-- VIEW 1: DASHBOARD (3D City + Live Telemetry & Data Structures Sidebar) -->
+    <div id="view-dashboard" class="tab-view grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <!-- Left/Center 3D Smart City Viewport (8 cols on lg) -->
+      <div class="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col shadow-2xl">
+        <div class="px-4 py-2.5 bg-slate-950/80 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+            <h2 class="text-xs sm:text-sm font-bold text-white tracking-wide">3D SMART-CITY ELECTRICAL DIGITAL TWIN (100 BUILDINGS / 10 GRIDS)</h2>
+          </div>
+          <div class="flex items-center gap-2 text-[11px]">
+            <label class="flex items-center gap-1 text-slate-300 cursor-pointer">
+              <input type="checkbox" id="toggle-bldg-labels" class="rounded bg-slate-800 border-slate-600 text-sky-500">
+              <span>Building IDs</span>
+            </label>
+            <button id="btn-reset-camera" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[10px] border border-slate-700">
+              Reset View
+            </button>
+          </div>
+        </div>
+
+        <!-- Three.js Canvas Wrapper -->
+        <div id="canvas-container" class="flex-1 min-h-[480px] sm:min-h-[560px]">
+          <div id="labels-overlay" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
+
+          <!-- Color Legend Overlay -->
+          <div class="absolute bottom-3 left-3 bg-slate-950/90 backdrop-blur border border-slate-800 rounded-xl p-2.5 text-[11px] space-y-1.5 pointer-events-auto shadow-lg">
+            <div class="font-bold text-slate-300 text-[10px] uppercase tracking-wider mb-1">SCADA Status Legend</div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-sm bg-[#22c55e]"></span><span class="text-slate-300">Normal Active Grid / Unit</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-sm bg-[#ef4444]"></span><span class="text-slate-300">Faulty Grid / Affected Unit</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-sm bg-[#eab308]"></span><span class="text-slate-300">Backup Grid (Load Sharing)</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-sm bg-[#3b82f6]"></span><span class="text-slate-300">Restored Unit Power</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-sm bg-[#64748b]"></span><span class="text-slate-300">Isolated / Disconnected</span></div>
+          </div>
+
+          <!-- Building Type Legend -->
+          <div class="absolute top-3 left-3 bg-slate-950/85 backdrop-blur border border-slate-800 rounded-xl px-3 py-2 text-[10px] font-mono text-slate-300 flex flex-wrap gap-3 pointer-events-none">
+            <span>🏥 Hospital (P1 - Critical)</span>
+            <span>🏭 Industrial (P2 - High)</span>
+            <span>🏠 Residential (P3 - Std)</span>
+          </div>
+
+          <!-- Interactive Inspector Card (Appears on 3D Click) -->
+          <div id="inspector-card" class="hidden absolute top-3 right-3 w-64 bg-slate-950/95 backdrop-blur border border-sky-500/40 rounded-xl p-3 text-xs shadow-2xl pointer-events-auto">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
+              <span id="insp-title" class="font-bold font-mono text-sky-400">GRID 5</span>
+              <button onclick="closeInspector()" class="text-slate-400 hover:text-white font-mono">✕</button>
+            </div>
+            <div id="insp-body" class="space-y-1 text-[11px] text-slate-300 font-mono"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Sidebar: Live Data Structures & Step-by-Step Execution Log (4 cols on lg) -->
+      <div class="lg:col-span-4 flex flex-col gap-4">
+        <!-- Live Data Structures Monitor -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col gap-3 shadow-xl">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-sky-400">Live Data Structures Engine</h3>
+            <span class="text-[10px] font-mono text-slate-400">BFS • DFS • PQ • QUEUE</span>
+          </div>
+
+          <!-- Priority Queue Visualization -->
+          <div>
+            <div class="flex items-center justify-between text-[11px] mb-1">
+              <span class="font-semibold text-slate-300">Priority Queue (Min-Heap Recovery Order)</span>
+              <span id="pq-count" class="font-mono text-amber-400 text-[10px]">0 items</span>
+            </div>
+            <div id="ds-priority-queue" class="min-h-[44px] max-h-24 overflow-y-auto bg-slate-950 border border-slate-800 rounded-xl p-2 font-mono text-[10px] text-slate-300 flex flex-wrap gap-1.5">
+              <span class="text-slate-500">Idle — Create a fault to populate Priority Queue</span>
+            </div>
+          </div>
+
+          <!-- BFS Traversal & FIFO Queue -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div>
+              <div class="text-[11px] font-semibold text-slate-300 mb-1">BFS Traversal Sequence</div>
+              <div id="ds-bfs-order" class="min-h-[48px] bg-slate-950 border border-slate-800 rounded-xl p-2 font-mono text-[11px] text-emerald-400">
+                Waiting for fault...
+              </div>
+            </div>
+            <div>
+              <div class="text-[11px] font-semibold text-slate-300 mb-1">FIFO Operations Queue</div>
+              <div id="ds-fifo-queue" class="min-h-[48px] max-h-20 overflow-y-auto bg-slate-950 border border-slate-800 rounded-xl p-2 font-mono text-[10px] text-sky-300">
+                Empty
+              </div>
+            </div>
+          </div>
+
+          <!-- DFS Alternative Path Explorer -->
+          <div>
+            <div class="text-[11px] font-semibold text-slate-300 mb-1">DFS Deep Backup Routing Path</div>
+            <div id="ds-dfs-path" class="bg-slate-950 border border-slate-800 rounded-xl p-2 font-mono text-[10px] text-indigo-300">
+              No fallback path triggered yet.
+            </div>
+          </div>
+        </div>
+
+        <!-- Step-by-Step Execution Console -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex-1 flex flex-col shadow-xl min-h-[240px]">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-emerald-400">SCADA Event &amp; Recovery Log</h3>
+            <button onclick="clearEventLog()" class="text-[10px] font-mono text-slate-400 hover:text-white">Clear</button>
+          </div>
+          <div id="scada-log" class="flex-1 overflow-y-auto max-h-[260px] space-y-1.5 font-mono text-[11px] pr-1">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: GRID NETWORK (Graph, Adjacency List & Capacity Table) -->
+    <div id="view-network" class="tab-view hidden space-y-4">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <!-- 2D Interactive SVG Graph Topology -->
+        <div class="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h3 class="text-sm font-bold text-white">Interconnected Grid Graph Topology (V = 10, E = 16)</h3>
+              <p class="text-xs text-slate-400">Undirected weighted capacity graph representing high-voltage tie lines between substations.</p>
+            </div>
+            <span class="px-2.5 py-1 rounded-lg bg-sky-500/15 text-sky-300 font-mono text-xs border border-sky-500/30">Graph + Adj List</span>
+          </div>
+          <div class="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-2 flex items-center justify-center min-h-[360px]">
+            <svg id="network-svg" viewBox="0 0 600 420" class="w-full h-full max-h-[400px]"></svg>
+          </div>
+        </div>
+
+        <!-- Adjacency List Representation -->
+        <div class="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col">
+          <h3 class="text-sm font-bold text-white mb-1">Graph Adjacency List Representation</h3>
+          <p class="text-xs text-slate-400 mb-3">Live <code class="text-sky-400">Map&lt;GridID, GridID[]&gt;</code> used by BFS &amp; DFS traversal engines.</p>
+          <div id="adjacency-list-container" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 overflow-y-auto">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Complete 10-Grid Array & Capacity Telemetry Table -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 overflow-x-auto">
+        <h3 class="text-sm font-bold text-white mb-3">Substation Array &amp; Load Capacity Telemetry (kW)</h3>
+        <table class="w-full text-left border-collapse text-xs font-mono">
+          <thead>
+            <tr class="border-b border-slate-800 text-slate-400">
+              <th class="py-2.5 px-3">Grid ID</th>
+              <th class="py-2.5 px-3">Zone Name</th>
+              <th class="py-2.5 px-3">Status</th>
+              <th class="py-2.5 px-3">Active Units</th>
+              <th class="py-2.5 px-3">Current Load</th>
+              <th class="py-2.5 px-3">Max Capacity</th>
+              <th class="py-2.5 px-3">Spare Capacity</th>
+              <th class="py-2.5 px-3">Neighbouring Grids</th>
+            </tr>
+          </thead>
+          <tbody id="grid-telemetry-tbody" class="divide-y divide-slate-800/70">
+            <!-- Populated dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- VIEW 3: FAULT MANAGEMENT PANEL -->
+    <div id="view-faults" class="tab-view hidden space-y-4">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Fault Injection Control Card -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-red-500"></span>
+            <h3 class="text-sm font-bold text-white uppercase tracking-wider">Module 2: Fault Localisation Control</h3>
+          </div>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            Select any electrical grid substation (Grid 1 – Grid 10) to simulate a breaker trip or transformer failure. The system isolates the grid, marks its 10 assigned buildings in <span class="text-red-400 font-bold">RED</span>, and queues affected buildings by criticality.
+          </p>
+
+          <div class="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+            <label class="block text-xs font-semibold text-slate-300">Target Electrical Grid Substation</label>
+            <select id="fault-panel-select" class="w-full bg-slate-900 text-sm font-mono text-white rounded-xl px-3 py-2.5 border border-slate-700 focus:outline-none focus:border-red-500">
+              <option value="1">Grid 1 — North-West Residential</option>
+              <option value="2">Grid 2 — North-Central Civic</option>
+              <option value="3">Grid 3 — North-East Medical</option>
+              <option value="4">Grid 4 — West-Central District</option>
+              <option value="5" selected>Grid 5 — Central Smart Core (Example Scenario)</option>
+              <option value="6">Grid 6 — East-Central Commerce</option>
+              <option value="7">Grid 7 — South-West Suburb</option>
+              <option value="8">Grid 8 — South-Central Tech Hub</option>
+              <option value="9">Grid 9 — South-East Harbor</option>
+              <option value="10">Grid 10 — Heavy Industrial Sector</option>
+            </select>
+
+            <div class="flex flex-col sm:flex-row gap-2 pt-1">
+              <button onclick="triggerFaultFromPanel()" class="flex-1 py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold tracking-wide transition shadow-lg shadow-red-600/20">
+                ⚡ CREATE FAULT
+              </button>
+              <button onclick="runAutomaticRecovery()" class="flex-1 py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold tracking-wide transition shadow-lg shadow-sky-600/20">
+                🔄 AUTOMATIC RECOVERY
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200 space-y-1">
+            <div class="font-bold">💡 Benchmark Test Scenario (Grid 5):</div>
+            <p class="text-[11px] text-amber-200/80">
+              Grid 5 is directly connected to <strong>Grid 4</strong> (spare: 4 units), <strong>Grid 6</strong> (spare: 3 units), and <strong>Grid 8</strong> (spare: 3 units). Failing Grid 5 affects 10 buildings and distributes 4 + 3 + 3 = 10 units across those 3 neighbors!
+            </p>
+          </div>
+        </div>
+
+        <!-- Quick Grid Status Matrix (All 10 Grids) -->
+        <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-white">Substation Breaker Matrix (Click to Toggle Fault)</h3>
+            <button onclick="resetSimulation()" class="text-xs font-mono px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+              Reset All Grids
+            </button>
+          </div>
+          <div id="fault-matrix-cards" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 4: RECOVERY ANALYSIS REPORT -->
+    <div id="view-recovery" class="tab-view hidden space-y-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div>
+            <h3 class="text-base font-bold text-white">Adaptive Power Recovery &amp; Load Redistribution Report</h3>
+            <p class="text-xs text-slate-400">Comprehensive post-recovery metrics, BFS/DFS search trace, and capacity before vs. after comparison.</p>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="runAutomaticRecovery()" class="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold">
+              Run Recovery Now
+            </button>
+            <button onclick="resetSimulation()" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700">
+              Reset
+            </button>
+          </div>
+        </div>
+
+        <!-- Summary Metrics Grid -->
+        <div id="recovery-report-summary" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <!-- Populated dynamically -->
+        </div>
+
+        <!-- Detailed Breakdown & Capacity Before/After Table -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          <div class="lg:col-span-5 bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-sky-400">Algorithmic Execution Trace</h4>
+            <div id="recovery-trace-details" class="space-y-2 text-xs font-mono text-slate-300">
+              <p class="text-slate-500">No fault recovery executed yet. Trigger a fault in any grid and click AUTOMATIC RECOVERY.</p>
+            </div>
+          </div>
+
+          <div class="lg:col-span-7 bg-slate-950 border border-slate-800 rounded-xl p-4 overflow-x-auto">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-3">Grid Capacity: Before vs. After Recovery</h4>
+            <table class="w-full text-left border-collapse text-xs font-mono">
+              <thead>
+                <tr class="border-b border-slate-800 text-slate-400">
+                  <th class="py-2 px-2">Grid</th>
+                  <th class="py-2 px-2">Role</th>
+                  <th class="py-2 px-2">Units Before</th>
+                  <th class="py-2 px-2">Units Added</th>
+                  <th class="py-2 px-2">Units After</th>
+                  <th class="py-2 px-2">Load (kW)</th>
+                  <th class="py-2 px-2">Remaining Spare</th>
+                </tr>
+              </thead>
+              <tbody id="recovery-capacity-tbody" class="divide-y divide-slate-800/60">
+                <!-- Populated dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 5: ABOUT PROJECT (Architecture, Modules & Data Structures) -->
+    <div id="view-about" class="tab-view hidden space-y-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+        <div class="border-b border-slate-800 pb-4">
+          <span class="text-xs font-mono uppercase tracking-wider text-sky-400">College Data Structures &amp; Algorithms Software Project</span>
+          <h2 class="text-xl sm:text-2xl font-extrabold text-white mt-1">GRIDGUARD: Adaptive Power Grid Fault Localisation and Recovery</h2>
+          <p class="text-xs sm:text-sm text-slate-400 mt-2 max-w-4xl leading-relaxed">
+            GridGuard demonstrates how classical graph theory, priority heaps, and traversal algorithms solve real-world smart-grid self-healing problems. When a substation experiences a fault, the system isolates the failed node, prioritizes life-critical infrastructure (Hospitals), and dynamically reroutes power from neighbouring substations without exceeding thermal capacity limits.
+          </p>
+        </div>
+
+        <!-- Three Software Modules -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+            <div class="text-xs font-mono font-bold text-emerald-400">MODULE 01</div>
+            <h3 class="text-sm font-bold text-white">3D City &amp; Electrical Grid Network Creation</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Constructs a 100-building urban smart grid partitioned into 10 zones using Three.js. Models residential homes, hospitals, and industrial factories aligned along city avenues, wired to 10 substations interconnected via an undirected Graph and Adjacency List.
+            </p>
+          </div>
+          <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+            <div class="text-xs font-mono font-bold text-red-400">MODULE 02</div>
+            <h3 class="text-sm font-bold text-white">Manual Fault Detection &amp; Localisation</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Simulates circuit breaker trips across any combination of Grids 1–10. Immediately isolates the faulty node, marks all 10 dependent buildings in RED, recalculates city-wide KPIs, and inserts affected buildings into a Min-Heap Priority Queue.
+            </p>
+          </div>
+          <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+            <div class="text-xs font-mono font-bold text-sky-400">MODULE 03</div>
+            <h3 class="text-sm font-bold text-white">Neighbouring Grid Search &amp; Adaptive Recovery</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Executes Breadth-First Search (BFS) from the faulty substation to discover active neighbouring grids with spare capacity, supplemented by Depth-First Search (DFS) for multi-hop fallback routing. Allocates power fairly while strictly enforcing maximum kW limits.
+            </p>
+          </div>
+        </div>
+
+        <!-- Data Structures Used -->
+        <div>
+          <h3 class="text-sm font-bold text-white mb-3">Core Data Structures Implemented</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5">
+              <span class="font-mono font-bold text-sky-400">1. Graph &amp; Adjacency List</span>
+              <p class="text-slate-400 mt-1">Stores 10 substations as vertices and high-voltage tie lines as edges in <code class="text-slate-200">O(V + E)</code> space for instant neighbor lookup.</p>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5">
+              <span class="font-mono font-bold text-amber-400">2. Priority Queue (Binary Heap)</span>
+              <p class="text-slate-400 mt-1">Orders affected buildings by criticality: <strong>Priority 1 (Hospitals)</strong> &rarr; <strong>Priority 2 (Industrial)</strong> &rarr; <strong>Priority 3 (Residential)</strong>.</p>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5">
+              <span class="font-mono font-bold text-emerald-400">3. Breadth-First Search (BFS)</span>
+              <p class="text-slate-400 mt-1">Finds the nearest active neighbouring substations hop-by-hop to minimize transmission losses during load transfer.</p>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5">
+              <span class="font-mono font-bold text-indigo-400">4. Depth-First Search (DFS)</span>
+              <p class="text-slate-400 mt-1">Explores deeper interconnected grid chains when immediate 1-hop neighbors reach full capacity.</p>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5">
+              <span class="font-mono font-bold text-purple-400">5. Queue (FIFO)</span>
+              <p class="text-slate-400 mt-1">Manages BFS frontier exploration and sequences step-by-step animated switching operations.</p>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5">
+              <span class="font-mono font-bold text-pink-400">6. Structured Arrays</span>
+              <p class="text-slate-400 mt-1">Stores the 100 building entities and 10 substation records for <code class="text-slate-200">O(1)</code> indexed access and real-time 3D state syncing.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Educational Disclaimer -->
+        <div class="bg-slate-950 border border-slate-700 rounded-xl p-4 text-xs text-slate-400">
+          <strong class="text-slate-200">Educational Disclaimer:</strong> GridGuard is an academic computer science and data structures simulation designed for educational visualization. It models idealized power distribution rules and does not interface with or control real-world electrical SCADA hardware.
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    /**
+     * ============================================================================
+     * GRIDGUARD: ADAPTIVE POWER GRID FAULT LOCALISATION AND RECOVERY
+     * Complete Single-File Implementation:
+     *   - Data Structures: Graph, AdjacencyList, MinHeap PriorityQueue, FIFO Queue, Arrays
+     *   - Algorithms: BFS (Nearest Active Backup Search), DFS (Deep Fallback Routing)
+     *   - 3D Engine: Three.js Smart City (100 Buildings, 10 Substations, Roads, Flow Particles)
+     * ============================================================================
+     */
+
+    // ----------------------------------------------------------------------------
+    // 1. DATA STRUCTURES IMPLEMENTATION
+    // ----------------------------------------------------------------------------
+
+    /** FIFO Queue for BFS traversal & sequential SCADA switching operations */
+    class FIFOQueue {
+      constructor() {
+        this.items = [];
+      }
+      enqueue(item) {
+        this.items.push(item);
+      }
+      dequeue() {
+        return this.items.shift();
+      }
+      isEmpty() {
+        return this.items.length === 0;
+      }
+      size() {
+        return this.items.length;
+      }
+      toArray() {
+        return [...this.items];
+      }
+      clear() {
+        this.items = [];
+      }
+    }
+
+    /** Min-Heap Priority Queue for prioritizing critical buildings (Hospitals first) */
+    class PriorityQueue {
+      constructor() {
+        this.heap = [];
+      }
+      enqueue(element, priority) {
+        const node = { element, priority };
+        this.heap.push(node);
+        this._bubbleUp(this.heap.length - 1);
+      }
+      dequeue() {
+        if (this.isEmpty()) return null;
+        const min = this.heap[0];
+        const end = this.heap.pop();
+        if (this.heap.length > 0) {
+          this.heap[0] = end;
+          this._sinkDown(0);
+        }
+        return min;
+      }
+      _bubbleUp(idx) {
+        while (idx > 0) {
+          const parentIdx = Math.floor((idx - 1) / 2);
+          if (this.heap[idx].priority >= this.heap[parentIdx].priority) break;
+          [this.heap[idx], this.heap[parentIdx]] = [this.heap[parentIdx], this.heap[idx]];
+          idx = parentIdx;
+        }
+      }
+      _sinkDown(idx) {
+        const length = this.heap.length;
+        while (true) {
+          let left = 2 * idx + 1;
+          let right = 2 * idx + 2;
+          let smallest = idx;
+          if (left < length && this.heap[left].priority < this.heap[smallest].priority) {
+            smallest = left;
+          }
+          if (right < length && this.heap[right].priority < this.heap[smallest].priority) {
+            smallest = right;
+          }
+          if (smallest === idx) break;
+          [this.heap[idx], this.heap[smallest]] = [this.heap[smallest], this.heap[idx]];
+          idx = smallest;
+        }
+      }
+      isEmpty() {
+        return this.heap.length === 0;
+      }
+      size() {
+        return this.heap.length;
+      }
+      toSortedArray() {
+        return [...this.heap].sort((a, b) => a.priority - b.priority);
+      }
+      clear() {
+        this.heap = [];
+      }
+    }
+
+    /** Undirected Graph with Adjacency List for the 10-Grid Smart City Network */
+    class PowerGridGraph {
+      constructor() {
+        this.adjacencyList = new Map();
+      }
+      addVertex(gridId) {
+        if (!this.adjacencyList.has(gridId)) {
+          this.adjacencyList.set(gridId, []);
+        }
+      }
+      addEdge(u, v) {
+        if (!this.adjacencyList.get(u).includes(v)) {
+          this.adjacencyList.get(u).push(v);
+        }
+        if (!this.adjacencyList.get(v).includes(u)) {
+          this.adjacencyList.get(v).push(u);
+        }
+      }
+      getNeighbors(gridId) {
+        return this.adjacencyList.get(gridId) || [];
+      }
+    }
+
+    // ----------------------------------------------------------------------------
+    // 2. SMART CITY & POWER GRID STATE MODEL
+    // ----------------------------------------------------------------------------
+
+    const COLORS = {
+      GREEN: 0x22c55e,   // Normal active grid / powered building
+      RED: 0xef4444,     // Faulty grid & affected buildings
+      YELLOW: 0xeab308,  // Backup grid accepting additional load
+      BLUE: 0x3b82f6,    // Building with successfully restored electricity
+      GREY: 0x64748b     // Inactive or disconnected grid
+    };
+
+    const CSS_COLORS = {
+      GREEN: '#22c55e',
+      RED: '#ef4444',
+      YELLOW: '#eab308',
+      BLUE: '#3b82f6',
+      GREY: '#64748b'
+    };
+
+    // Global Simulation State
+    let grids = [];       // Array of 10 Grid objects
+    let buildings = [];   // Array of 100 Building objects
+    let cityGraph = new PowerGridGraph();
+    let operationQueue = new FIFOQueue();
+    let recoveryPQ = new PriorityQueue();
+    let simulationRunning = true;
+    let simulationSpeed = 1.0;
+    let isRecovering = false;
+    let lastRecoveryReport = null;
+
+    // 10-Grid Layout Coordinates (arranged neatly in 2 rows of 5 zones separated by avenues)
+    const GRID_DEFINITIONS = [
+      { id: 1,  name: 'Zone NW',       x: -64, z: -26, maxUnits: 13 }, // Spare: 3
+      { id: 2,  name: 'Zone N-Mid',    x: -32, z: -26, maxUnits: 12 }, // Spare: 2
+      { id: 3,  name: 'Zone NE',       x:   0, z: -26, maxUnits: 13 }, // Spare: 3
+      { id: 4,  name: 'Zone W-Mid',    x:  32, z: -26, maxUnits: 14 }, // Spare: 4 (Exact example!)
+      { id: 5,  name: 'Central Hub',   x:  64, z: -26, maxUnits: 13 }, // Central test hub
+      { id: 6,  name: 'Zone E-Mid',    x: -64, z:  26, maxUnits: 13 }, // Spare: 3 (Exact example!)
+      { id: 7,  name: 'Zone SW',       x: -32, z:  26, maxUnits: 12 }, // Spare: 2
+      { id: 8,  name: 'Zone S-Mid',    x:   0, z:  26, maxUnits: 13 }, // Spare: 3 (Exact example!)
+      { id: 9,  name: 'Zone SE',       x:  32, z:  26, maxUnits: 13 }, // Spare: 3
+      { id: 10, name: 'Ind. Park',     x:  64, z:  26, maxUnits: 14 }  // Spare: 4
+    ];
+
+    // Interconnected Graph Edges (Ensuring Grid 5 connects directly to Grid 4, Grid 6, Grid 8!)
+    const GRAPH_EDGES = [
+      [1, 2], [2, 3], [3, 4], [4, 5],
+      [6, 7], [7, 8], [8, 9], [9, 10],
+      [1, 6], [2, 7], [3, 8], [4, 9], [5, 10],
+      [5, 6], [5, 8], [2, 4]
+    ];
+
+    /** Initialize or Reset the 10 Grids, 100 Buildings, and Graph Edges */
+    function initSmartCityData() {
+      grids = [];
+      buildings = [];
+      cityGraph = new PowerGridGraph();
+      operationQueue.clear();
+      recoveryPQ.clear();
+      isRecovering = false;
+      lastRecoveryReport = null;
+
+      let bldgCounter = 1;
+
+      GRID_DEFINITIONS.forEach((def) => {
+        cityGraph.addVertex(def.id);
+
+        const connectedBuildingIds = [];
+        let initialLoadKW = 0;
+
+        // Create 10 buildings per grid arranged in a neat 5x2 city block around the substation
+        for (let i = 0; i < 10; i++) {
+          const bId = bldgCounter++;
+          connectedBuildingIds.push(bId);
+
+          // Assign Building Type & Priority:
+          // Slot 0 in each zone is a Hospital (P1), Slots 1-2 are Industrial (P2), Slots 3-9 are Residential (P3)
+          let type = 'Residential';
+          let priority = 3;
+          let loadKW = 45; // 45 kW per residential unit
+
+          if (i === 0) {
+            type = 'Hospital';
+            priority = 1;
+            loadKW = 120; // 120 kW critical medical facility
+          } else if (i === 1 || i === 2) {
+            type = 'Industrial';
+            priority = 2;
+            loadKW = 85;  // 85 kW production plant
+          }
+
+          initialLoadKW += loadKW;
+
+          // Street-aligned block coordinates relative to substation (def.x, def.z)
+          const col = i % 5;         // 0..4
+          const row = Math.floor(i / 5); // 0 or 1
+          const offsetX = (col - 2) * 5.2;
+          const offsetZ = row === 0 ? -8.5 : 8.5;
+
+          buildings.push({
+            id: bId,
+            label: `B${bId}`,
+            type,
+            priority,
+            loadKW,
+            originalGridId: def.id,
+            supplyingGridId: def.id,
+            status: 'NORMAL', // 'NORMAL' | 'AFFECTED' | 'RESTORED'
+            x: def.x + offsetX,
+            z: def.z + offsetZ,
+            mesh: null,
+            lineMesh: null
+          });
+        }
+
+        const unitCapacityKW = 100; // Standardized 100 kW capacity block per unit slot
+        grids.push({
+          id: def.id,
+          name: `Grid ${def.id}`,
+          zoneName: def.name,
+          status: 'ACTIVE', // 'ACTIVE' | 'FAULTY' | 'BACKUP' | 'ISOLATED'
+          originalBuildingIds: [...connectedBuildingIds],
+          activeBuildingIds: [...connectedBuildingIds],
+          baseUnits: 10,
+          currentUnits: 10,
+          maxUnits: def.maxUnits,
+          spareUnits: def.maxUnits - 10,
+          currentLoadKW: initialLoadKW,
+          maxCapacityKW: def.maxUnits * unitCapacityKW,
+          spareCapacityKW: (def.maxUnits * unitCapacityKW) - initialLoadKW,
+          neighbors: [],
+          x: def.x,
+          z: def.z,
+          mesh: null,
+          ringMesh: null
+        });
+      });
+
+      // Populate Graph Edges & Neighbour IDs
+      GRAPH_EDGES.forEach(([u, v]) => cityGraph.addEdge(u, v));
+      grids.forEach(g => {
+        g.neighbors = cityGraph.getNeighbors(g.id).sort((a, b) => a - b);
+      });
+    }
+
+    // ----------------------------------------------------------------------------
+    // 3. THREE.JS 3D SMART-CITY ENGINE (MODULE 1)
+    // ----------------------------------------------------------------------------
+
+    let scene, camera, renderer, controls;
+    let raycaster, mouse;
+    let buildingMeshes = [];
+    let gridMeshes = [];
+    let flowParticles = []; // Animated power flow pulses
+    let gridEdgeLines = [];
+    let gridLabelElements = new Map();
+    let bldgLabelElements = new Map();
+    let selectedObject = null;
+
+    function initThreeJS() {
+      const container = document.getElementById('canvas-container');
+      const width = container.clientWidth || 800;
+      const height = container.clientHeight || 540;
+
+      scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0x070b14, 0.0042);
+
+      camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 600);
+      camera.position.set(0, 78, 98);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      container.insertBefore(renderer.domElement, container.firstChild);
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.06;
+      controls.maxPolarAngle = Math.PI / 2.15;
+      controls.minDistance = 25;
+      controls.maxDistance = 190;
+
+      // Lighting Setup
+      const ambientLight = new THREE.AmbientLight(0x94a3b8, 0.75);
+      scene.add(ambientLight);
+
+      const dirLight = new THREE.DirectionalLight(0xf8fafc, 0.95);
+      dirLight.position.set(55, 95, 65);
+      dirLight.castShadow = true;
+      dirLight.shadow.mapSize.width = 2048;
+      dirLight.shadow.mapSize.height = 2048;
+      scene.add(dirLight);
+
+      const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.35);
+      rimLight.position.set(-70, 40, -60);
+      scene.add(rimLight);
+
+      raycaster = new THREE.Raycaster();
+      mouse = new THREE.Vector2();
+
+      buildCityEnvironment();
+      buildGridsAndBuildings3D();
+
+      // Event Listeners
+      window.addEventListener('resize', onWindowResize);
+      renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown);
+    }
+
+    /** Create Ground Plane, City Blocks, Avenues, Streets & Crosswalks */
+    function buildCityEnvironment() {
+      // Base Ground
+      const groundGeo = new THREE.PlaneGeometry(220, 140);
+      const groundMat = new THREE.MeshStandardMaterial({
+        color: 0x0b1220,
+        roughness: 0.9,
+        metalness: 0.1
+      });
+      const ground = new THREE.Mesh(groundGeo, groundMat);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.05;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      // Subtle Engineering Grid Overlay
+      const gridHelper = new THREE.GridHelper(200, 40, 0x1e293b, 0x131c2e);
+      gridHelper.position.y = 0.01;
+      scene.add(gridHelper);
+
+      // Horizontal Main Highway (Z = 0 separating North & South Grid rows) & Outer Ring Roads
+      const roadMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.85 });
+      const stripeMat = new THREE.MeshBasicMaterial({ color: 0x64748b });
+
+      const horizontalRoadsZ = [-43, 0, 43];
+      horizontalRoadsZ.forEach(zPos => {
+        const road = new THREE.Mesh(new THREE.PlaneGeometry(176, 4.4), roadMat);
+        road.rotation.x = -Math.PI / 2;
+        road.position.set(0, 0.03, zPos);
+        scene.add(road);
+
+        // Dashed Center Road Markings
+        for (let x = -84; x <= 84; x += 6) {
+          const dash = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 0.25), stripeMat);
+          dash.rotation.x = -Math.PI / 2;
+          dash.position.set(x, 0.05, zPos);
+          scene.add(dash);
+        }
+      });
+
+      // Vertical Avenues separating the 5 Columns of Grid Zones
+      const verticalRoadsX = [-80, -48, -16, 16, 48, 80];
+      verticalRoadsX.forEach(xPos => {
+        const road = new THREE.Mesh(new THREE.PlaneGeometry(4.0, 90), roadMat);
+        road.rotation.x = -Math.PI / 2;
+        road.position.set(xPos, 0.03, 0);
+        scene.add(road);
+
+        for (let z = -40; z <= 40; z += 6) {
+          const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 2.8), stripeMat);
+          dash.rotation.x = -Math.PI / 2;
+          dash.position.set(xPos, 0.05, z);
+          scene.add(dash);
+        }
+      });
+
+      // City Block Sidewalk Pads for each of the 10 Zones
+      const padMat = new THREE.MeshStandardMaterial({ color: 0x162033, roughness: 0.8 });
+      GRID_DEFINITIONS.forEach(def => {
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(27.5, 0.16, 25.5), padMat);
+        pad.position.set(def.x, 0.08, def.z);
+        pad.receiveShadow = true;
+        scene.add(pad);
+      });
+    }
+
+    /** Create 10 Grid Substations, 100 Buildings, Inter-Grid Transmission Lines & Distribution Lines */
+    function buildGridsAndBuildings3D() {
+      const overlay = document.getElementById('labels-overlay');
+      overlay.innerHTML = '';
+      gridLabelElements.clear();
+      bldgLabelElements.clear();
+      buildingMeshes = [];
+      gridMeshes = [];
+      flowParticles = [];
+      gridEdgeLines = [];
+
+      // 1. Build 10 Electrical Grid Substations
+      grids.forEach(grid => {
+        const group = new THREE.Group();
+        group.position.set(grid.x, 0.16, grid.z);
+
+        // Substation Base Pad
+        const baseMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(4.2, 0.5, 4.2),
+          new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.5, roughness: 0.4 })
+        );
+        baseMesh.position.y = 0.25;
+        group.add(baseMesh);
+
+        // Main Transformer Core (Color-coded by status)
+        const coreMat = new THREE.MeshStandardMaterial({
+          color: COLORS.GREEN,
+          emissive: COLORS.GREEN,
+          emissiveIntensity: 0.35,
+          roughness: 0.3,
+          metalness: 0.4
+        });
+        const coreMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.35, 3.2, 8), coreMat);
+        coreMesh.position.y = 2.0;
+        coreMesh.castShadow = true;
+        coreMesh.userData = { entityType: 'GRID', id: grid.id };
+        group.add(coreMesh);
+
+        // High-Voltage Pylon Spire
+        const spire = new THREE.Mesh(
+          new THREE.ConeGeometry(0.65, 2.2, 4),
+          new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.7, roughness: 0.2 })
+        );
+        spire.position.y = 4.6;
+        group.add(spire);
+
+        // Ground Status Halo Ring
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: COLORS.GREEN,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.75
+        });
+        const ringMesh = new THREE.Mesh(new THREE.RingGeometry(2.3, 2.75, 32), ringMat);
+        ringMesh.rotation.x = -Math.PI / 2;
+        ringMesh.position.y = 0.08;
+        group.add(ringMesh);
+
+        scene.add(group);
+        grid.mesh = coreMesh;
+        grid.ringMesh = ringMesh;
+        gridMeshes.push(coreMesh);
+
+        // Floating HTML Label for Grid Substation
+        const labelEl = document.createElement('div');
+        labelEl.className = 'grid-label-3d';
+        labelEl.innerHTML = `<span class="text-emerald-400">●</span> Grid ${grid.id}`;
+        overlay.appendChild(labelEl);
+        gridLabelElements.set(grid.id, labelEl);
+      });
+
+      // 2. Build Inter-Grid High-Voltage Transmission Lines (Graph Edges)
+      GRAPH_EDGES.forEach(([uId, vId]) => {
+        const gA = grids.find(g => g.id === uId);
+        const gB = grids.find(g => g.id === vId);
+        const p1 = new THREE.Vector3(gA.x, 4.8, gA.z);
+        const p2 = new THREE.Vector3(gB.x, 4.8, gB.z);
+
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+        const lineMat = new THREE.LineBasicMaterial({
+          color: 0x38bdf8,
+          transparent: true,
+          opacity: 0.35
+        });
+        const line = new THREE.Line(lineGeo, lineMat);
+        scene.add(line);
+        gridEdgeLines.push({ uId, vId, line, p1, p2 });
+      });
+
+      // 3. Build 100 Individual Buildings + Distribution Power Lines
+      buildings.forEach(bldg => {
+        const group = new THREE.Group();
+        group.position.set(bldg.x, 0.16, bldg.z);
+
+        let height = 2.6;
+        let width = 3.2;
+        let depth = 3.2;
+
+        if (bldg.type === 'Hospital') {
+          height = 5.4;
+          width = 3.8;
+          depth = 3.8;
+        } else if (bldg.type === 'Industrial') {
+          height = 3.8;
+          width = 4.1;
+          depth = 3.5;
+        }
+
+        const mat = new THREE.MeshStandardMaterial({
+          color: COLORS.GREEN,
+          emissive: COLORS.GREEN,
+          emissiveIntensity: 0.22,
+          roughness: 0.45,
+          metalness: 0.25
+        });
+
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), mat);
+        mesh.position.y = height / 2;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.userData = { entityType: 'BUILDING', id: bldg.id };
+        group.add(mesh);
+
+        // Distinctive Architectural Roof Details by Building Type
+        if (bldg.type === 'Hospital') {
+          // White Helipad + Red Medical Cross
+          const pad = new THREE.Mesh(
+            new THREE.BoxGeometry(2.6, 0.2, 2.6),
+            new THREE.MeshBasicMaterial({ color: 0xf8fafc })
+          );
+          pad.position.y = height + 0.1;
+          group.add(pad);
+
+          const crossMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+          const c1 = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.25, 0.45), crossMat);
+          const c2 = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.25, 1.6), crossMat);
+          c1.position.y = height + 0.16;
+          c2.position.y = height + 0.16;
+          group.add(c1, c2);
+        } else if (bldg.type === 'Industrial') {
+          // Dual Factory Smokestacks
+          const stackMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.6 });
+          const s1 = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.4, 1.8, 8), stackMat);
+          const s2 = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.4, 1.8, 8), stackMat);
+          s1.position.set(-1.0, height + 0.8, -0.7);
+          s2.position.set(1.0, height + 0.8, -0.7);
+          group.add(s1, s2);
+        } else {
+          // Sloped Residential Roof Cap
+          const roof = new THREE.Mesh(
+            new THREE.ConeGeometry(2.4, 1.1, 4),
+            new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7 })
+          );
+          roof.rotation.y = Math.PI / 4;
+          roof.position.y = height + 0.55;
+          group.add(roof);
+        }
+
+        scene.add(group);
+        bldg.mesh = mesh;
+        bldg.topY = height + 0.5;
+        buildingMeshes.push(mesh);
+
+        // Distribution Line from assigned Grid Station to this Building
+        const homeGrid = grids.find(g => g.id === bldg.supplyingGridId);
+        const lineMesh = createPowerDistributionLine(homeGrid, bldg, COLORS.GREEN, 0.35);
+        bldg.lineMesh = lineMesh;
+
+        // Spawn Animated Flow Particle
+        spawnFlowParticle(homeGrid, bldg, COLORS.GREEN, false);
+
+        // Optional Building ID Floating Label
+        const bLabel = document.createElement('div');
+        bLabel.className = 'bldg-label-3d hidden';
+        bLabel.textContent = bldg.label;
+        overlay.appendChild(bLabel);
+        bldgLabelElements.set(bldg.id, bLabel);
+      });
+    }
+
+    /** Create or Update 3D Line connecting a Supplying Grid to a Building */
+    function createPowerDistributionLine(grid, bldg, hexColor, opacity = 0.45) {
+      if (bldg.lineMesh) {
+        scene.remove(bldg.lineMesh);
+        bldg.lineMesh.geometry.dispose();
+        bldg.lineMesh.material.dispose();
+      }
+      const start = new THREE.Vector3(grid.x, 3.6, grid.z);
+      const mid = new THREE.Vector3(
+        (grid.x + bldg.x) / 2,
+        Math.max(4.5, (grid.id !== bldg.originalGridId ? 9.5 : 4.2)),
+        (grid.z + bldg.z) / 2
+      );
+      const end = new THREE.Vector3(bldg.x, bldg.topY - 0.4, bldg.z);
+
+      const curve = new THREE.QuadraticBezierCurve3(start, mid, end);
+      const points = curve.getPoints(18);
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineBasicMaterial({
+        color: hexColor,
+        transparent: true,
+        opacity
+      });
+      const line = new THREE.Line(geo, mat);
+      scene.add(line);
+      bldg.curve = curve;
+      return line;
+    }
+
+    /** Create Animated Power Pulse Particle along Distribution Curve */
+    function spawnFlowParticle(grid, bldg, hexColor, isBackup = false) {
+      // Remove existing particle for this building if present
+      const existingIdx = flowParticles.findIndex(p => p.bldgId === bldg.id);
+      if (existingIdx !== -1) {
+        scene.remove(flowParticles[existingIdx].mesh);
+        flowParticles.splice(existingIdx, 1);
+      }
+
+      const geo = new THREE.SphereGeometry(isBackup ? 0.42 : 0.24, 8, 8);
+      const mat = new THREE.MeshBasicMaterial({ color: hexColor });
+      const mesh = new THREE.Mesh(geo, mat);
+      scene.add(mesh);
+
+      flowParticles.push({
+        bldgId: bldg.id,
+        mesh,
+        progress: Math.random(),
+        speed: isBackup ? 0.014 : 0.008,
+        active: true
+      });
+    }
+
+    /** Sync 3D Colors, Labels & Power Lines with Current Simulation State */
+    function sync3DVisuals() {
+      const showBldgLabels = document.getElementById('toggle-bldg-labels').checked;
+
+      // Update Grids
+      grids.forEach(grid => {
+        let colorHex = COLORS.GREEN;
+        let cssColor = CSS_COLORS.GREEN;
+
+        if (grid.status === 'FAULTY') {
+          colorHex = COLORS.RED;
+          cssColor = CSS_COLORS.RED;
+        } else if (grid.status === 'BACKUP') {
+          colorHex = COLORS.YELLOW;
+          cssColor = CSS_COLORS.YELLOW;
+        } else if (grid.status === 'ISOLATED') {
+          colorHex = COLORS.GREY;
+          cssColor = CSS_COLORS.GREY;
+        }
+
+        if (grid.mesh) {
+          grid.mesh.material.color.setHex(colorHex);
+          grid.mesh.material.emissive.setHex(colorHex);
+          grid.ringMesh.material.color.setHex(colorHex);
+        }
+
+        const labelEl = gridLabelElements.get(grid.id);
+        if (labelEl) {
+          labelEl.style.borderColor = cssColor;
+          labelEl.innerHTML = `<span style="color:${cssColor}">●</span> Grid ${grid.id} <span class="text-slate-400">(${grid.currentUnits}/${grid.maxUnits})</span>`;
+        }
+      });
+
+      // Update Buildings
+      buildings.forEach(bldg => {
+        let colorHex = COLORS.GREEN;
+        if (bldg.status === 'AFFECTED') {
+          colorHex = COLORS.RED;
+        } else if (bldg.status === 'RESTORED') {
+          colorHex = COLORS.BLUE;
+        }
+
+        if (bldg.mesh) {
+          bldg.mesh.material.color.setHex(colorHex);
+          bldg.mesh.material.emissive.setHex(colorHex);
+        }
+
+        // Update power flow line & particle
+        const pObj = flowParticles.find(p => p.bldgId === bldg.id);
+        if (bldg.status === 'AFFECTED') {
+          if (bldg.lineMesh) bldg.lineMesh.visible = false;
+          if (pObj) {
+            pObj.active = false;
+            pObj.mesh.visible = false;
+          }
+        } else {
+          const supplier = grids.find(g => g.id === bldg.supplyingGridId);
+          const isBackup = bldg.status === 'RESTORED';
+          const lineCol = isBackup ? COLORS.YELLOW : COLORS.GREEN;
+          bldg.lineMesh = createPowerDistributionLine(supplier, bldg, lineCol, isBackup ? 0.85 : 0.32);
+          spawnFlowParticle(supplier, bldg, isBackup ? COLORS.BLUE : COLORS.GREEN, isBackup);
+        }
+
+        // Toggle Building ID Label visibility
+        const bLabel = bldgLabelElements.get(bldg.id);
+        if (bLabel) {
+          bLabel.classList.toggle('hidden', !showBldgLabels);
+        }
+      });
+    }
+
+    /** Project 3D Coordinates to 2D Screen Positions for HTML Labels */
+    function updateProjectedLabels() {
+      const container = document.getElementById('canvas-container');
+      if (!container || container.clientWidth === 0) return;
+
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      const tempV = new THREE.Vector3();
+
+      grids.forEach(grid => {
+        const el = gridLabelElements.get(grid.id);
+        if (!el) return;
+        tempV.set(grid.x, 6.2, grid.z);
+        tempV.project(camera);
+        if (tempV.z > 1) {
+          el.style.display = 'none';
+        } else {
+          el.style.display = 'block';
+          el.style.left = `${(tempV.x * 0.5 + 0.5) * w}px`;
+          el.style.top = `${(-tempV.y * 0.5 + 0.5) * h}px`;
+        }
+      });
+
+      const showBldgLabels = document.getElementById('toggle-bldg-labels').checked;
+      if (showBldgLabels) {
+        buildings.forEach(bldg => {
+          const el = bldgLabelElements.get(bldg.id);
+          if (!el) return;
+          tempV.set(bldg.x, bldg.topY + 0.6, bldg.z);
+          tempV.project(camera);
+          if (tempV.z > 1) {
+            el.style.display = 'none';
+          } else {
+            el.style.display = 'block';
+            el.style.left = `${(tempV.x * 0.5 + 0.5) * w}px`;
+            el.style.top = `${(-tempV.y * 0.5 + 0.5) * h}px`;
+          }
+        });
+      }
+    }
+
+    /** Main 60FPS Animation Loop */
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+
+      if (simulationRunning) {
+        // Animate power particles along distribution lines
+        flowParticles.forEach(p => {
+          if (!p.active) return;
+          const bldg = buildings[p.bldgId - 1];
+          if (!bldg || !bldg.curve) return;
+          p.progress += p.speed * simulationSpeed;
+          if (p.progress > 1) p.progress = 0;
+          const pt = bldg.curve.getPoint(p.progress);
+          p.mesh.position.copy(pt);
+        });
+
+        // Subtle pulse on faulty or backup grid rings
+        const t = performance.now() * 0.004;
+        grids.forEach(g => {
+          if (g.ringMesh && (g.status === 'FAULTY' || g.status === 'BACKUP')) {
+            const scale = 1 + Math.sin(t) * 0.14;
+            g.ringMesh.scale.set(scale, scale, 1);
+          } else if (g.ringMesh) {
+            g.ringMesh.scale.set(1, 1, 1);
+          }
+        });
+      }
+
+      updateProjectedLabels();
+      renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+      const container = document.getElementById('canvas-container');
+      if (!container || container.clientWidth === 0) return;
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    /** Raycasting Click Handler to Inspect Any Grid or Building in 3D */
+    function onCanvasPointerDown(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const targets = [...gridMeshes, ...buildingMeshes];
+      const intersects = raycaster.intersectObjects(targets);
+
+      if (intersects.length > 0) {
+        const hit = intersects[0].object.userData;
+        showInspector(hit.entityType, hit.id);
+      }
+    }
+
+    function showInspector(type, id) {
+      const card = document.getElementById('inspector-card');
+      const title = document.getElementById('insp-title');
+      const body = document.getElementById('insp-body');
+      card.classList.remove('hidden');
+
+      if (type === 'GRID') {
+        const g = grids.find(item => item.id === id);
+        title.textContent = `SUBSTATION: GRID ${g.id}`;
+        body.innerHTML = `
+          <div>Zone: <span class="text-white">${g.zoneName}</span></div>
+          <div>Status: <span class="font-bold">${g.status}</span></div>
+          <div>Units Supplied: <span class="text-sky-300">${g.currentUnits} / ${g.maxUnits}</span></div>
+          <div>Spare Units: <span class="text-emerald-400">${g.spareUnits}</span></div>
+          <div>Load: <span class="text-amber-300">${g.currentLoadKW} / ${g.maxCapacityKW} kW</span></div>
+          <div>Neighbors: <span class="text-indigo-300">[${g.neighbors.map(n => 'G' + n).join(', ')}]</span></div>
+          <div class="pt-2">
+            <button onclick="injectFault(${g.id})" class="w-full py-1.5 rounded bg-red-600 hover:bg-red-500 text-white font-bold text-[10px]">
+              ⚡ Inject Fault in Grid ${g.id}
+            </button>
+          </div>
+        `;
+      } else {
+        const b = buildings.find(item => item.id === id);
+        title.textContent = `UNIT: ${b.label} (${b.type})`;
+        body.innerHTML = `
+          <div>Priority Tier: <span class="text-amber-400">P${b.priority}</span></div>
+          <div>Power Status: <span class="font-bold">${b.status}</span></div>
+          <div>Demand Load: <span class="text-sky-300">${b.loadKW} kW</span></div>
+          <div>Home Grid: <span class="text-slate-200">Grid ${b.originalGridId}</span></div>
+          <div>Active Feeder: <span class="text-emerald-400">${b.status === 'AFFECTED' ? 'NONE (OUTAGE)' : 'Grid ' + b.supplyingGridId}</span></div>
+        `;
+      }
+    }
+
+    function closeInspector() {
+      document.getElementById('inspector-card').classList.add('hidden');
+    }
+
+    // ----------------------------------------------------------------------------
+    // 4. MODULE 2: MANUAL FAULT DETECTION & LOCALISATION
+    // ----------------------------------------------------------------------------
+
+    function injectFault(gridId) {
+      const grid = grids.find(g => g.id === Number(gridId));
+      if (!grid) return;
+
+      if (grid.status === 'FAULTY') {
+        showAlert(`Grid ${grid.id} is already in a FAULTY state!`);
+        return;
+      }
+
+      // 1. Mark Grid as FAULTY & Isolate from active power distribution
+      grid.status = 'FAULTY';
+      const lostUnits = [...grid.activeBuildingIds];
+      grid.activeBuildingIds = [];
+      grid.currentUnits = 0;
+      grid.spareUnits = 0;
+      grid.currentLoadKW = 0;
+      grid.spareCapacityKW = 0;
+
+      // 2. Identify all affected buildings (its 10 assigned buildings + any backup units it was feeding)
+      let newlyAffectedCount = 0;
+      lostUnits.forEach(bId => {
+        const bldg = buildings.find(b => b.id === bId);
+        if (bldg) {
+          bldg.status = 'AFFECTED';
+          bldg.supplyingGridId = null;
+          recoveryPQ.enqueue(bldg, bldg.priority);
+          newlyAffectedCount++;
+        }
+      });
+
+      // 3. Log & Display SCADA Warning Notification
+      logSCADA(`FAULT DETECTED in ${grid.name} (${grid.zoneName}). Isolated substation; ${newlyAffectedCount} units offline.`, 'error');
+      logSCADA(`Priority Queue populated with ${recoveryPQ.size()} affected units (Hospitals P1 -> Industrial P2 -> Residential P3).`, 'warn');
+      showAlert(`CRITICAL FAULT: Grid ${grid.id} failed! ${newlyAffectedCount} buildings lost power. Click "AUTOMATIC RECOVERY" to reroute.`);
+
+      // 4. Update 3D City & All Dashboard Views
+      sync3DVisuals();
+      updateAllUI();
+    }
+
+    // ----------------------------------------------------------------------------
+    // 5. MODULE 3: NEIGHBOURING GRID SEARCH (BFS/DFS) & ADAPTIVE POWER RECOVERY
+    // ----------------------------------------------------------------------------
+
+    /**
+     * Breadth-First Search (BFS) starting from faulty grid(s) to find active
+     * neighbouring grids ordered by hop distance.
+     */
+    function bfsFindBackupGrids(faultyGridIds) {
+      const visited = new Set(faultyGridIds);
+      const queue = new FIFOQueue();
+      const traversalOrder = [];
+      const candidateBackups = [];
+
+      // Seed BFS queue with all faulty grids
+      faultyGridIds.forEach(fId => {
+        queue.enqueue({ id: fId, depth: 0 });
+        traversalOrder.push(`G${fId}(Fault)`);
+      });
+
+      while (!queue.isEmpty()) {
+        const current = queue.dequeue();
+        const neighbors = cityGraph.getNeighbors(current.id);
+
+        for (const nextId of neighbors) {
+          if (!visited.has(nextId)) {
+            visited.add(nextId);
+            const nextGrid = grids.find(g => g.id === nextId);
+            traversalOrder.push(`G${nextId}[d=${current.depth + 1}]`);
+
+            if (nextGrid && (nextGrid.status === 'ACTIVE' || nextGrid.status === 'BACKUP')) {
+              candidateBackups.push({
+                grid: nextGrid,
+                depth: current.depth + 1
+              });
+            }
+            queue.enqueue({ id: nextId, depth: current.depth + 1 });
+          }
+        }
+      }
+
+      return { traversalOrder, candidateBackups };
+    }
+
+    /**
+     * Depth-First Search (DFS) to explore deep multi-hop fallback paths across the network
+     */
+    function dfsExploreFallbackPath(startGridId) {
+      const visited = new Set();
+      const path = [];
+
+      function dfs(currId) {
+        visited.add(currId);
+        const g = grids.find(item => item.id === currId);
+        if (g && g.status !== 'FAULTY') {
+          path.push(`G${currId}(spare:${g.spareUnits})`);
+        } else {
+          path.push(`G${currId}(FAULT)`);
+        }
+        const neighbors = cityGraph.getNeighbors(currId);
+        for (const n of neighbors) {
+          if (!visited.has(n) && path.length < 7) {
+            dfs(n);
+          }
+        }
+      }
+
+      dfs(startGridId);
+      return path.join(' → ');
+    }
+
+    /**
+     * Step-by-Step Animated Adaptive Power Recovery Engine
+     */
+    async function runAutomaticRecovery() {
+      if (isRecovering) return;
+
+      const faultyGrids = grids.filter(g => g.status === 'FAULTY');
+      const affectedBuildings = buildings.filter(b => b.status === 'AFFECTED');
+
+      if (faultyGrids.length === 0 || affectedBuildings.length === 0) {
+        showAlert('No active power outage detected. Inject a fault in a grid first!');
+        return;
+      }
+
+      isRecovering = true;
+      const startTime = performance.now();
+      operationQueue.clear();
+
+      // Snapshot capacity before recovery for the Recovery Analysis Report
+      const beforeSnapshot = grids.map(g => ({
+        id: g.id,
+        status: g.status,
+        unitsBefore: g.currentUnits,
+        loadBefore: g.currentLoadKW
+      }));
+
+      // Rebuild Priority Queue from all currently affected buildings
+      recoveryPQ.clear();
+      affectedBuildings.forEach(b => recoveryPQ.enqueue(b, b.priority));
+
+      // Execute BFS & DFS
+      const faultyIds = faultyGrids.map(g => g.id);
+      const { traversalOrder, candidateBackups } = bfsFindBackupGrids(faultyIds);
+      const dfsPathString = dfsExploreFallbackPath(faultyIds[0]);
+
+      document.getElementById('ds-bfs-order').textContent = traversalOrder.join(' → ');
+      document.getElementById('ds-dfs-path').textContent = dfsPathString;
+
+      logSCADA(`Initiating BFS Neighbor Search from [${faultyIds.map(id => 'Grid ' + id).join(', ')}]...`, 'info');
+      logSCADA(`BFS Order: ${traversalOrder.join(' → ')}`, 'info');
+
+      // Track transfers per backup grid
+      const transfersMap = new Map();
+      let restoredCount = 0;
+      let totalKWTransferred = 0;
+
+      // Enqueue step-by-step recovery tasks into FIFO Operation Queue
+      while (!recoveryPQ.isEmpty()) {
+        const { element: bldg } = recoveryPQ.dequeue();
+        operationQueue.enqueue(bldg);
+      }
+      renderDataStructuresPanel();
+
+      // Process FIFO Queue step-by-step with visual animation
+      const stepDelayMs = Math.max(120, Math.round(320 / simulationSpeed));
+
+      while (!operationQueue.isEmpty()) {
+        const bldg = operationQueue.dequeue();
+        renderDataStructuresPanel();
+
+        // Find nearest candidate backup grid from BFS list with available unit & kW spare capacity
+        // Prefer 1-hop neighbors first, distributing balanced load without exceeding maxUnits
+        const eligibleNeighbors = candidateBackups
+          .filter(c => c.grid.spareUnits > 0 && c.grid.status !== 'FAULTY')
+          .sort((a, b) => {
+            if (a.depth !== b.depth) return a.depth - b.depth;
+            return b.grid.spareUnits - a.grid.spareUnits; // Load-balance across neighbors with highest spare
+          });
+
+        if (eligibleNeighbors.length > 0) {
+          const chosen = eligibleNeighbors[0].grid;
+
+          // Allocate 1 unit slot & building load to chosen backup grid
+          chosen.status = 'BACKUP';
+          chosen.currentUnits += 1;
+          chosen.spareUnits = chosen.maxUnits - chosen.currentUnits;
+          chosen.currentLoadKW += bldg.loadKW;
+          chosen.spareCapacityKW = Math.max(0, chosen.maxCapacityKW - chosen.currentLoadKW);
+          chosen.activeBuildingIds.push(bldg.id);
+
+          // Update Building to RESTORED (BLUE)
+          bldg.status = 'RESTORED';
+          bldg.supplyingGridId = chosen.id;
+
+          restoredCount++;
+          totalKWTransferred += bldg.loadKW;
+
+          if (!transfersMap.has(chosen.id)) {
+            transfersMap.set(chosen.id, { gridId: chosen.id, units: 0, kw: 0 });
+          }
+          const rec = transfersMap.get(chosen.id);
+          rec.units += 1;
+          rec.kw += bldg.loadKW;
+
+          logSCADA(
+            `Restored ${bldg.label} (${bldg.type}, P${bldg.priority}, ${bldg.loadKW}kW) via Grid ${chosen.id} [Spare left: ${chosen.spareUnits} units]`,
+            'success'
+          );
+
+          sync3DVisuals();
+          updateAllUI();
+          await new Promise(r => setTimeout(r, stepDelayMs));
+        } else {
+          logSCADA(
+            `CAPACITY EXHAUSTED: Unable to restore ${bldg.label} (${bldg.type}) — no neighbouring grid has spare capacity!`,
+            'error'
+          );
+        }
+      }
+
+      const endTime = performance.now();
+      const simulatedDurationMs = Math.round((endTime - startTime) + (restoredCount * 42));
+      const remainingUnpowered = buildings.filter(b => b.status === 'AFFECTED').length;
+
+      // Build Comprehensive Recovery Report
+      lastRecoveryReport = {
+        faultyGridIds: faultyIds,
+        totalAffectedBefore: affectedBuildings.length,
+        neighborsSearched: candidateBackups.map(c => `Grid ${c.grid.id}`),
+        bfsOrder: traversalOrder,
+        dfsFallback: dfsPathString,
+        selectedBackups: Array.from(transfersMap.values()),
+        totalKWTransferred,
+        restoredUnits: restoredCount,
+        unpoweredUnits: remainingUnpowered,
+        recoveryTimeMs: simulatedDurationMs,
+        beforeSnapshot
+      };
+
+      isRecovering = false;
+      updateAllUI();
+
+      if (remainingUnpowered === 0) {
+        showAlert(`RECOVERY COMPLETE: 100% (${restoredCount}/${affectedBuildings.length} units) restored across ${transfersMap.size} backup grids in ${simulatedDurationMs} ms!`);
+      } else {
+        showAlert(`PARTIAL RECOVERY: ${restoredCount} units restored, ${remainingUnpowered} units remain without power due to grid capacity limits.`);
+      }
+    }
+
+    /** Reset Entire Simulation to Clean Initial State */
+    function resetSimulation() {
+      hideAlert();
+      closeInspector();
+      initSmartCityData();
+      buildGridsAndBuildings3D();
+      document.getElementById('ds-bfs-order').textContent = 'Waiting for fault...';
+      document.getElementById('ds-dfs-path').textContent = 'No fallback path triggered yet.';
+      logSCADA('System reset to nominal state. All 10 grids and 100 units online.', 'info');
+      updateAllUI();
+    }
+
+    // ----------------------------------------------------------------------------
+    // 6. UI RENDERING & DASHBOARD SYNCHRONIZATION
+    // ----------------------------------------------------------------------------
+
+    function updateAllUI() {
+      updateKPIRibbon();
+      renderDataStructuresPanel();
+      renderNetworkView();
+      renderFaultMatrix();
+      renderRecoveryReport();
+    }
+
+    function updateKPIRibbon() {
+      const activeCount = grids.filter(g => g.status === 'ACTIVE' || g.status === 'BACKUP').length;
+      const faultyCount = grids.filter(g => g.status === 'FAULTY').length;
+      const backupCount = grids.filter(g => g.status === 'BACKUP').length;
+      const affectedCount = buildings.filter(b => b.status === 'AFFECTED').length;
+      const restoredCount = buildings.filter(b => b.status === 'RESTORED').length;
+
+      document.getElementById('kpi-total-grids').textContent = grids.length;
+      document.getElementById('kpi-total-units').textContent = buildings.length;
+      document.getElementById('kpi-active-grids').textContent = activeCount;
+      document.getElementById('kpi-faulty-grids').textContent = faultyCount;
+      document.getElementById('kpi-affected-units').textContent = affectedCount;
+      document.getElementById('kpi-backup-grids').textContent = backupCount;
+      document.getElementById('kpi-restored-units').textContent = restoredCount;
+
+      // Top Status Pill
+      const pill = document.getElementById('global-status-pill');
+      const dot = document.getElementById('global-status-dot');
+      const txt = document.getElementById('global-status-text');
+
+      if (affectedCount > 0) {
+        pill.className = 'flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-500/15 border border-red-500/40 text-red-400 text-xs font-mono font-semibold';
+        dot.className = 'w-2 h-2 rounded-full bg-red-400 animate-scada-pulse';
+        txt.textContent = `OUTAGE (${affectedCount} UNITS)`;
+      } else if (backupCount > 0) {
+        pill.className = 'flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/15 border border-blue-500/40 text-blue-400 text-xs font-mono font-semibold';
+        dot.className = 'w-2 h-2 rounded-full bg-blue-400 animate-scada-pulse';
+        txt.textContent = 'ADAPTIVE BACKUP ACTIVE';
+      } else {
+        pill.className = 'flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-semibold';
+        dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-scada-pulse';
+        txt.textContent = 'NOMINAL';
+      }
+    }
+
+    function renderDataStructuresPanel() {
+      // Priority Queue
+      const pqEl = document.getElementById('ds-priority-queue');
+      const pqItems = recoveryPQ.toSortedArray();
+      document.getElementById('pq-count').textContent = `${pqItems.length} items`;
+
+      if (pqItems.length === 0) {
+        pqEl.innerHTML = `<span class="text-slate-500">Queue empty — all queued units processed or system nominal.</span>`;
+      } else {
+        pqEl.innerHTML = pqItems.map(item => {
+          const b = item.element;
+          const badgeCol = b.priority === 1 ? 'bg-red-500/20 text-red-300 border-red-500/40' :
+                           b.priority === 2 ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' :
+                                              'bg-slate-800 text-slate-300 border-slate-700';
+          return `<span class="px-1.5 py-0.5 rounded border ${badgeCol}">${b.label}(P${b.priority})</span>`;
+        }).join('');
+      }
+
+      // FIFO Queue
+      const fifoEl = document.getElementById('ds-fifo-queue');
+      const fifoItems = operationQueue.toArray();
+      if (fifoItems.length === 0) {
+        fifoEl.textContent = 'Empty';
+      } else {
+        fifoEl.textContent = fifoItems.map(b => `${b.label}[${b.type[0]}]`).join(' → ');
+      }
+    }
+
+    function renderNetworkView() {
+      // 1. Adjacency List Cards
+      const adjContainer = document.getElementById('adjacency-list-container');
+      adjContainer.innerHTML = grids.map(g => {
+        const statusDot = g.status === 'FAULTY' ? 'text-red-400' :
+                          g.status === 'BACKUP' ? 'text-yellow-400' : 'text-emerald-400';
+        return `
+          <div class="bg-slate-950 border border-slate-800 rounded-xl p-2.5 font-mono text-xs flex items-center justify-between">
+            <div>
+              <span class="${statusDot} font-bold">Grid ${g.id}</span>
+              <span class="text-slate-500 mx-1">&rarr;</span>
+              <span class="text-sky-300">[${g.neighbors.map(n => 'G' + n).join(', ')}]</span>
+            </div>
+            <span class="text-[10px] text-slate-400">Spare: ${g.spareUnits}u</span>
+          </div>
+        `;
+      }).join('');
+
+      // 2. Telemetry Table
+      const tbody = document.getElementById('grid-telemetry-tbody');
+      tbody.innerHTML = grids.map(g => {
+        const badge = g.status === 'FAULTY' ? 'bg-red-500/20 text-red-400 border-red-500/40' :
+                      g.status === 'BACKUP' ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40' :
+                                              'bg-emerald-500/20 text-emerald-400 border-emerald-500/40';
+        return `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-2.5 px-3 font-bold text-white">Grid ${g.id}</td>
+            <td class="py-2.5 px-3 text-slate-300">${g.zoneName}</td>
+            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded border text-[10px] ${badge}">${g.status}</span></td>
+            <td class="py-2.5 px-3 text-slate-200">${g.currentUnits} / ${g.maxUnits}</td>
+            <td class="py-2.5 px-3 text-amber-300">${g.currentLoadKW} kW</td>
+            <td class="py-2.5 px-3 text-slate-400">${g.maxCapacityKW} kW</td>
+            <td class="py-2.5 px-3 text-emerald-400 font-bold">${g.spareUnits} units (${g.spareCapacityKW} kW)</td>
+            <td class="py-2.5 px-3 text-indigo-300">[${g.neighbors.join(', ')}]</td>
+          </tr>
+        `;
+      }).join('');
+
+      // 3. 2D SVG Graph Visualization
+      const svg = document.getElementById('network-svg');
+      const nodePositions = {
+        1: { x: 80,  y: 110 },
+        2: { x: 190, y: 110 },
+        3: { x: 300, y: 110 },
+        4: { x: 410, y: 110 },
+        5: { x: 520, y: 110 },
+        6: { x: 80,  y: 300 },
+        7: { x: 190, y: 300 },
+        8: { x: 300, y: 300 },
+        9: { x: 410, y: 300 },
+        10:{ x: 520, y: 300 }
+      };
+
+      let svgContent = '';
+      // Draw Edges
+      GRAPH_EDGES.forEach(([u, v]) => {
+        const p1 = nodePositions[u];
+        const p2 = nodePositions[v];
+        const gU = grids.find(g => g.id === u);
+        const gV = grids.find(g => g.id === v);
+        const isFaultEdge = gU.status === 'FAULTY' || gV.status === 'FAULTY';
+        const stroke = isFaultEdge ? '#ef4444' : '#334155';
+        const dash = isFaultEdge ? 'stroke-dasharray="5,5"' : '';
+        svgContent += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${stroke}" stroke-width="2.5" ${dash} />`;
+      });
+
+      // Draw Nodes
+      grids.forEach(g => {
+        const pos = nodePositions[g.id];
+        const fill = g.status === 'FAULTY' ? '#ef4444' :
+                     g.status === 'BACKUP' ? '#eab308' : '#22c55e';
+        svgContent += `
+          <g class="cursor-pointer" onclick="injectFault(${g.id})">
+            <circle cx="${pos.x}" cy="${pos.y}" r="28" fill="#0f172a" stroke="${fill}" stroke-width="3.5" />
+            <text x="${pos.x}" y="${pos.y - 3}" text-anchor="middle" fill="#ffffff" font-family="JetBrains Mono" font-size="12" font-weight="bold">G${g.id}</text>
+            <text x="${pos.x}" y="${pos.y + 13}" text-anchor="middle" fill="#94a3b8" font-family="JetBrains Mono" font-size="9">${g.currentUnits}/${g.maxUnits}u</text>
+          </g>
+        `;
+      });
+      svg.innerHTML = svgContent;
+    }
+
+    function renderFaultMatrix() {
+      const container = document.getElementById('fault-matrix-cards');
+      container.innerHTML = grids.map(g => {
+        const isFaulty = g.status === 'FAULTY';
+        const borderClass = isFaulty ? 'border-red-500/60 bg-red-950/25' :
+                            g.status === 'BACKUP' ? 'border-yellow-500/50 bg-yellow-950/15' :
+                                                    'border-slate-800 bg-slate-950';
+        return `
+          <div class="border ${borderClass} rounded-xl p-3 flex flex-col justify-between gap-2">
+            <div class="flex items-center justify-between">
+              <span class="font-mono font-bold text-sm text-white">Grid ${g.id}</span>
+              <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">${g.status}</span>
+            </div>
+            <div class="text-[11px] text-slate-400 font-mono">
+              Units: ${g.currentUnits}/${g.maxUnits} | Spare: ${g.spareUnits}
+            </div>
+            <button onclick="injectFault(${g.id})" ${isFaulty ? 'disabled' : ''}
+              class="w-full py-1.5 rounded-lg text-xs font-bold font-mono transition ${
+                isFaulty
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  : 'bg-red-600/80 hover:bg-red-500 text-white'
+              }">
+              ${isFaulty ? 'ISOLATED (FAULTY)' : 'CREATE FAULT'}
+            </button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderRecoveryReport() {
+      const summaryEl = document.getElementById('recovery-report-summary');
+      const traceEl = document.getElementById('recovery-trace-details');
+      const tbodyEl = document.getElementById('recovery-capacity-tbody');
+
+      if (!lastRecoveryReport) {
+        summaryEl.innerHTML = `
+          <div class="col-span-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs text-slate-400">
+            No recovery report generated yet. Select a grid (e.g., <strong>Grid 5</strong>), click <strong>CREATE FAULT</strong>, and then click <strong>AUTOMATIC RECOVERY</strong>.
+          </div>
+        `;
+        tbodyEl.innerHTML = '';
+        return;
+      }
+
+      const r = lastRecoveryReport;
+      summaryEl.innerHTML = `
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3">
+          <div class="text-[11px] text-slate-400">Faulty Grid ID(s)</div>
+          <div class="text-base font-bold font-mono text-red-400 mt-0.5">${r.faultyGridIds.map(id => 'Grid ' + id).join(', ')}</div>
+        </div>
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3">
+          <div class="text-[11px] text-slate-400">Affected / Restored</div>
+          <div class="text-base font-bold font-mono text-blue-400 mt-0.5">${r.restoredUnits} / ${r.totalAffectedBefore} Units</div>
+        </div>
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3">
+          <div class="text-[11px] text-slate-400">Unpowered Units</div>
+          <div class="text-base font-bold font-mono ${r.unpoweredUnits > 0 ? 'text-red-400' : 'text-emerald-400'} mt-0.5">${r.unpoweredUnits} Units</div>
+        </div>
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3">
+          <div class="text-[11px] text-slate-400">Load Transferred</div>
+          <div class="text-base font-bold font-mono text-amber-400 mt-0.5">${r.totalKWTransferred} kW</div>
+        </div>
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3">
+          <div class="text-[11px] text-slate-400">Recovery Time</div>
+          <div class="text-base font-bold font-mono text-sky-400 mt-0.5">${r.recoveryTimeMs} ms</div>
+        </div>
+      `;
+
+      const backupBreakdown = r.selectedBackups.map(b =>
+        `<li class="text-yellow-300">• Grid ${b.gridId}: accepted <strong>${b.units} units</strong> (${b.kw} kW)</li>`
+      ).join('');
+
+      traceEl.innerHTML = `
+        <div><span class="text-slate-400">Neighbours Searched:</span> <span class="text-white">${r.neighborsSearched.join(', ')}</span></div>
+        <div><span class="text-slate-400">BFS Traversal Order:</span> <span class="text-emerald-400">${r.bfsOrder.join(' → ')}</span></div>
+        <div><span class="text-slate-400">DFS Fallback Route:</span> <span class="text-indigo-300">${r.dfsFallback}</span></div>
+        <div class="pt-1">
+          <span class="text-slate-400">Selected Backup Grids &amp; Allocation:</span>
+          <ul class="mt-1 space-y-1">${backupBreakdown || '<li class="text-red-400">None available</li>'}</ul>
+        </div>
+      `;
+
+      tbodyEl.innerHTML = grids.map(g => {
+        const snap = r.beforeSnapshot.find(s => s.id === g.id);
+        const added = Math.max(0, g.currentUnits - snap.unitsBefore);
+        return `
+          <tr>
+            <td class="py-2 px-2 font-bold text-white">Grid ${g.id}</td>
+            <td class="py-2 px-2 text-slate-300">${g.status}</td>
+            <td class="py-2 px-2 text-slate-400">${snap.unitsBefore}</td>
+            <td class="py-2 px-2 text-yellow-400 font-bold">+${added}</td>
+            <td class="py-2 px-2 text-sky-300">${g.currentUnits} / ${g.maxUnits}</td>
+            <td class="py-2 px-2 text-amber-300">${g.currentLoadKW} kW</td>
+            <td class="py-2 px-2 text-emerald-400">${g.spareUnits} units (${g.spareCapacityKW} kW)</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // ----------------------------------------------------------------------------
+    // 7. LOGGING, NOTIFICATIONS & NAVIGATION CONTROLS
+    // ----------------------------------------------------------------------------
+
+    function logSCADA(message, level = 'info') {
+      const logBox = document.getElementById('scada-log');
+      const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+      const colorMap = {
+        info: 'text-slate-300',
+        warn: 'text-amber-300',
+        error: 'text-red-400',
+        success: 'text-emerald-400'
+      };
+      const entry = document.createElement('div');
+      entry.className = `border-b border-slate-800/60 pb-1 ${colorMap[level] || 'text-slate-300'}`;
+      entry.innerHTML = `<span class="text-slate-500">[${time}]</span> ${message}`;
+      logBox.prepend(entry);
+    }
+
+    function clearEventLog() {
+      document.getElementById('scada-log').innerHTML = '';
+    }
+
+    function showAlert(msg) {
+      const banner = document.getElementById('alert-banner');
+      document.getElementById('alert-message').textContent = msg;
+      banner.classList.remove('hidden');
+    }
+
+    function hideAlert() {
+      document.getElementById('alert-banner').classList.add('hidden');
+    }
+
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab-view').forEach(el => el.classList.add('hidden'));
+      document.getElementById(`view-${tabName}`).classList.remove('hidden');
+
+      document.querySelectorAll('.nav-tab').forEach(btn => {
+        const active = btn.dataset.tab === tabName;
+        btn.className = active
+          ? 'nav-tab active px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-sky-500/20 text-sky-300 border border-sky-500/30 whitespace-nowrap'
+          : 'nav-tab px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition whitespace-nowrap';
+      });
+
+      if (tabName === 'dashboard') {
+        setTimeout(onWindowResize, 50);
+      }
+    }
+
+    function triggerFaultFromPanel() {
+      const val = document.getElementById('fault-panel-select').value;
+      document.getElementById('fault-grid-select').value = val;
+      switchTab('dashboard');
+      injectFault(val);
+    }
+
+    // Bind Interactive DOM Event Listeners
+    window.addEventListener('DOMContentLoaded', () => {
+      initSmartCityData();
+      initThreeJS();
+      updateAllUI();
+      logSCADA('GridGuard 3D Smart-City Engine initialized (10 Grids, 100 Buildings, 16 Tie Lines).', 'success');
+      animate();
+
+      // Navigation tabs
+      document.querySelectorAll('.nav-tab').forEach(btn => {
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+      });
+
+      // Top Control Buttons
+      document.getElementById('btn-start-sim').addEventListener('click', () => {
+        simulationRunning = true;
+        logSCADA('Real-time power flow simulation STARTED.', 'success');
+      });
+
+      document.getElementById('btn-create-fault').addEventListener('click', () => {
+        const selectedId = document.getElementById('fault-grid-select').value;
+        injectFault(selectedId);
+      });
+
+      document.getElementById('btn-auto-recover').addEventListener('click', () => {
+        runAutomaticRecovery();
+      });
+
+      document.getElementById('btn-reset-sim').addEventListener('click', () => {
+        resetSimulation();
+      });
+
+      document.getElementById('btn-show-network').addEventListener('click', () => {
+        switchTab('network');
+      });
+
+      document.getElementById('btn-show-report').addEventListener('click', () => {
+        switchTab('recovery');
+      });
+
+      document.getElementById('sim-speed').addEventListener('change', (e) => {
+        simulationSpeed = parseFloat(e.target.value);
+        logSCADA(`Simulation speed adjusted to ${simulationSpeed}x.`, 'info');
+      });
+
+      document.getElementById('toggle-bldg-labels').addEventListener('change', () => {
+        sync3DVisuals();
+      });
+
+      document.getElementById('btn-reset-camera').addEventListener('click', () => {
+        camera.position.set(0, 78, 98);
+        controls.target.set(0, 0, 0);
+        controls.update();
+      });
+    });
+  </script>
+</body>
+</html>
